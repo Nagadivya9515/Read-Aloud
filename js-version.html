@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docx Text-to-Speech Reader</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Mammoth.js CDN for .docx parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+    <style>
+        body {
+            background-color: #2E2E2E;
+            color: white;
+            font-family: 'Helvetica', sans-serif;
+        }
+        .scrollbar-custom::-webkit-scrollbar {
+            width: 8px;
+        }
+        .scrollbar-custom::-webkit-scrollbar-track {
+            background: #4B4B4B;
+        }
+        .scrollbar-custom::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        .scrollbar-custom::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        textarea {
+            resize: none;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body class="flex justify-center items-center min-h-screen">
+    <div class="w-64 p-5 bg-[#2E2E2E] rounded-lg shadow-lg">
+        <!-- Upload Button -->
+        <input type="file" id="fileInput" accept=".docx" class="hidden">
+        <button id="uploadBtn" class="w-full mb-4 py-2 px-4 bg-[#4CAF50] text-white font-bold text-lg rounded hover:bg-[#45A049] transition">
+            Upload Docx File
+        </button>
+
+        <!-- Test TTS Button -->
+        <button id="testBtn" class="w-full mb-4 py-2 px-4 bg-[#2196F3] text-white font-bold text-lg rounded hover:bg-[#1E88E5] transition">
+            Test TTS
+        </button>
+
+        <!-- Speed Selector -->
+        <label for="speedSelect" class="block mb-2 text-lg font-semibold text-center">Speech Speed:</label>
+        <select id="speedSelect" class="w-full mb-4 p-2 bg-white text-black rounded text-base">
+            <option value="1.0" selected>1.0x</option>
+            <option value="1.25">1.25x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2.0">2.0x</option>
+        </select>
+
+        <!-- Text Display -->
+        <div class="mb-4">
+            <textarea id="textDisplay" class="w-full h-64 p-2 bg-white text-black rounded scrollbar-custom text-base" readonly></textarea>
+        </div>
+
+        <!-- Control Buttons -->
+        <div class="grid grid-cols-4 gap-2 mb-4">
+            <button id="playBtn" class="py-1 px-2 bg-[#FF9800] text-white font-semibold text-sm rounded hover:bg-[#F57C00] transition disabled:bg-gray-500" disabled>Play</button>
+            <button id="pauseBtn" class="py-1 px-2 bg-[#F44336] text-white font-semibold text-sm rounded hover:bg-[#D32F2F] transition disabled:bg-gray-500" disabled>Pause</button>
+            <button id="stopBtn" class="py-1 px-2 bg-[#757575] text-white font-semibold text-sm rounded hover:bg-[#616161] transition disabled:bg-gray-500" disabled>Stop</button>
+            <button id="restartBtn" class="py-1 px-2 bg-[#3F51B5] text-white font-semibold text-sm rounded hover:bg-[#303F9F] transition disabled:bg-gray-500" disabled>Restart</button>
+        </div>
+
+        <!-- Status Label -->
+        <p id="statusLabel" class="text-center text-[#BBDEFB] text-base">Status: Ready</p>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const testBtn = document.getElementById('testBtn');
+        const speedSelect = document.getElementById('speedSelect');
+        const textDisplay = document.getElementById('textDisplay');
+        const playBtn = document.getElementById('playBtn');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        const statusLabel = document.getElementById('statusLabel');
+
+        let text = '';
+        let textChunks = [];
+        let currentChunk = 0;
+        let isSpeaking = false;
+        let isPaused = false;
+        let utterance = null;
+
+        // Initialize button states
+        function updateButtonStates() {
+            playBtn.disabled = !text || (isSpeaking && !isPaused);
+            pauseBtn.disabled = !isSpeaking || isPaused;
+            stopBtn.disabled = !isSpeaking;
+            restartBtn.disabled = !text;
+        }
+
+        // Clean text by removing non-printable characters
+        function cleanText(text) {
+            return text.replace(/[^\x20-\x7E\n]/g, '');
+        }
+
+        // Split text into chunks
+        function chunkText(text, maxChars = 10000) {
+            textChunks = [];
+            let start = 0;
+            while (start < text.length) {
+                let end = start + maxChars;
+                if (end < text.length) {
+                    end = text.lastIndexOf(' ', end);
+                    if (end === -1) end = start + maxChars;
+                }
+                textChunks.push(text.slice(start, end));
+                start = end + 1;
+            }
+            console.log(`Text split into ${textChunks.length} chunks.`);
+        }
+
+        // Show error message
+        function showError(title, message) {
+            alert(`${title}: ${message}`);
+        }
+
+        // Upload and parse .docx file
+        uploadBtn.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const result = await mammoth.extractRawText({ arrayBuffer });
+                text = cleanText(result.value);
+                if (!text) {
+                    console.warn('Document contains no readable text.');
+                    showError('Warning', 'The document is empty or contains no readable text.');
+                    statusLabel.textContent = 'Status: Empty Document';
+                    return;
+                }
+
+                chunkText(text);
+                textDisplay.value = text;
+                textDisplay.scrollTop = textDisplay.scrollHeight;
+                statusLabel.textContent = 'Status: File Loaded';
+                console.log(`File loaded successfully. Text length: ${text.length} characters.`);
+                updateButtonStates();
+            } catch (e) {
+                console.error(`Failed to load file: ${e.message}`);
+                showError('Error', `Failed to load file: ${e.message}`);
+                statusLabel.textContent = 'Status: Error Loading File';
+            }
+        });
+
+        // Test TTS
+        testBtn.addEventListener('click', () => {
+            stop();
+            const testText = 'This is a test of the text-to-speech system.';
+            textChunks = [testText];
+            currentChunk = 0;
+            speak();
+        });
+
+        // Play speech
+        playBtn.addEventListener('click', () => {
+            if (!text) {
+                showError('Warning', 'No text to read. Please upload a file.');
+                return;
+            }
+            if (isPaused) {
+                window.speechSynthesis.resume();
+                isPaused = false;
+                statusLabel.textContent = `Status: Resuming (Speed: ${speedSelect.value}x, Chunk ${currentChunk + 1}/${textChunks.length})`;
+                console.log(`Playback resumed for chunk ${currentChunk}`);
+            } else if (!isSpeaking) {
+                currentChunk = 0;
+                statusLabel.textContent = `Status: Playing (Speed: ${speedSelect.value}x, Chunk ${currentChunk + 1}/${textChunks.length})`;
+                console.log('Play initiated.');
+                speak();
+            }
+            updateButtonStates();
+        });
+
+        // Pause speech
+        pauseBtn.addEventListener('click', () => {
+            if (isSpeaking && !isPaused) {
+                window.speechSynthesis.pause();
+                isPaused = true;
+                statusLabel.textContent = `Status: Paused (Chunk ${currentChunk + 1})`;
+                console.log(`Playback paused for chunk ${currentChunk}`);
+                updateButtonStates();
+            }
+        });
+
+        // Stop speech
+        stopBtn.addEventListener('click', () => {
+            if (isSpeaking) {
+                window.speechSynthesis.cancel();
+                isSpeaking = false;
+                isPaused = false;
+                currentChunk = 0;
+                statusLabel.textContent = 'Status: Stopped';
+                console.log('Playback stopped.');
+                updateButtonStates();
+            }
+        });
+
+        // Restart speech
+        restartBtn.addEventListener('click', () => {
+            console.log('Restart initiated.');
+            stop();
+            playBtn.click();
+        });
+
+        // Speak function
+        function speak() {
+            if (!textChunks[currentChunk]) {
+                showError('Warning', 'No text to read.');
+                return;
+            }
+            try {
+                utterance = new SpeechSynthesisUtterance(textChunks[currentChunk]);
+                utterance.rate = parseFloat(speedSelect.value);
+                utterance.onend = () => {
+                    if (!isSpeaking) return;
+                    currentChunk++;
+                    if (currentChunk < textChunks.length) {
+                        statusLabel.textContent = `Status: Playing (Speed: ${speedSelect.value}x, Chunk ${currentChunk + 1}/${textChunks.length})`;
+                        speak();
+                    } else {
+                        isSpeaking = false;
+                        isPaused = false;
+                        currentChunk = 0;
+                        statusLabel.textContent = 'Status: Finished';
+                        console.log('All chunks played.');
+                        updateButtonStates();
+                    }
+                };
+                utterance.onerror = (e) => {
+                    console.error(`Speech error: ${e.error}`);
+                    showError('Error', `Speech error: ${e.error}`);
+                    isSpeaking = false;
+                    isPaused = false;
+                    statusLabel.textContent = 'Status: Speech Error';
+                    updateButtonStates();
+                };
+                window.speechSynthesis.speak(utterance);
+                isSpeaking = true;
+                isPaused = false;
+                updateButtonStates();
+            } catch (e) {
+                console.error(`Speech error: ${e.message}`);
+                showError('Error', `Speech error: ${e.message}`);
+                statusLabel.textContent = 'Status: Speech Error';
+                isSpeaking = false;
+                isPaused = false;
+                updateButtonStates();
+            }
+        }
+
+        // Handle window close
+        window.addEventListener('beforeunload', () => {
+            if (isSpeaking) window.speechSynthesis.cancel();
+        });
+
+        // Initial button states
+        updateButtonStates();
+    </script>
+</body>
+</html>
